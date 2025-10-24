@@ -17,7 +17,6 @@ local time = 0
 
 function love.load()
     love.window.setTitle("Software Rendered 3D Cube")
-    love.window.setMode(800, 600)
 
     -- Load texture
     texture = love.graphics.newImage("checkered_placeholder.png")
@@ -90,3 +89,9 @@ function love.draw()
     love.graphics.print("WASD: Move Camera", 10, 30)
     love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 50)
 end
+
+return {
+    load = love.load,
+    update = love.update,
+    draw = love.draw
+}

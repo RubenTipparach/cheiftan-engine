@@ -43,6 +43,15 @@ function mat4.translation(x, y, z)
     }
 end
 
+function mat4.scale(x, y, z)
+    return {
+        x, 0, 0, 0,
+        0, y, 0, 0,
+        0, 0, z, 0,
+        0, 0, 0, 1
+    }
+end
+
 function mat4.rotationX(angle)
     local c = math.cos(angle)
     local s = math.sin(angle)
@@ -77,13 +86,13 @@ function mat4.rotationZ(angle)
 end
 
 function mat4.perspective(fov, aspect, near, far)
-    local f = 1.0 / math.tan(math.rad(fov) / 2.0)
-    local rangeInv = 1.0 / (near - far)
+    local f = 1.0 / math.tan(fov / 2.0)  -- fov already in radians
+    local rangeInv = 1.0 / (far - near)
 
     return {
         f / aspect, 0, 0, 0,
         0, f, 0, 0,
-        0, 0, (near + far) * rangeInv, 2 * near * far * rangeInv,
+        0, 0, -(near + far) * rangeInv, -2 * near * far * rangeInv,
         0, 0, -1, 0
     }
 end
