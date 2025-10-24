@@ -136,7 +136,8 @@ function GIF:save(filename)
     -- Write frames
     for _, imageData in ipairs(self.frames) do
         -- Graphic Control Extension
-        f:write(string.char(0x21, 0xF9, 0x04, 0x00))
+        -- Packed field: disposal method 2 (restore to background), no transparency
+        f:write(string.char(0x21, 0xF9, 0x04, 0x08))
         writeWord(self.delay)
         f:write(string.char(0, 0)) -- Transparent color index (none)
 

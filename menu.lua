@@ -4,7 +4,7 @@ local scene_manager = require("scene_manager")
 
 local menuItems = {
     {title = "Test Cube", file = "test_cube_scene.lua"},
-    {title = "5000 Cubes", file = "cubes_scene_dda.lua"},
+    {title = "1000 Cubes", file = "cubes_scene_dda.lua"},
     {title = "City Scene", file = "city_scene.lua"}
 }
 

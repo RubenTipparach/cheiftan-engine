@@ -1,15 +1,32 @@
--- DDA Scanline Software Renderer
+-- DDA Scanline Software Renderer with LuaJIT FFI optimization
 -- Based on reference-lib/Concepts/TwoTriangles.bas
 
+local config = require("config")
+local ffi = require("ffi")
 local renderer_dda = {}
 
-local RENDER_WIDTH = 960
-local RENDER_HEIGHT = 540
+-- Performance counters
+local stats = {
+    trianglesDrawn = 0,
+    pixelsDrawn = 0,
+    trianglesCulled = 0,
+    trianglesClipped = 0
+}
+
+local RENDER_WIDTH = config.RENDER_WIDTH
+local RENDER_HEIGHT = config.RENDER_HEIGHT
 
 -- Buffers
 local softwareImageData
 local softwareZBuffer
 local textureData
+
+-- FFI pointers for direct memory access
+local framebufferPtr = nil
+local zbufferPtr = nil
+local texturePtr = nil
+local texWidth = 0
+local texHeight = 0
 
 -- Cached matrices for drawTriangle3D
 local currentMVP = nil
@@ -21,40 +38,66 @@ function renderer_dda.init(width, height)
 
     -- Initialize software rendering resources
     softwareImageData = love.image.newImageData(RENDER_WIDTH, RENDER_HEIGHT)
-    softwareZBuffer = {}
-    for i = 1, RENDER_WIDTH * RENDER_HEIGHT do
-        softwareZBuffer[i] = math.huge
+
+    -- Get FFI pointer to framebuffer (RGBA8 format, 4 bytes per pixel)
+    framebufferPtr = ffi.cast("uint8_t*", softwareImageData:getFFIPointer())
+
+    -- Allocate z-buffer using FFI for faster access
+    zbufferPtr = ffi.new("float[?]", RENDER_WIDTH * RENDER_HEIGHT)
+    for i = 0, RENDER_WIDTH * RENDER_HEIGHT - 1 do
+        zbufferPtr[i] = math.huge
     end
 
-    print("DDA Renderer initialized: " .. RENDER_WIDTH .. "x" .. RENDER_HEIGHT)
+    print("DDA Renderer initialized (FFI): " .. RENDER_WIDTH .. "x" .. RENDER_HEIGHT)
 end
 
 function renderer_dda.clearBuffers()
     -- Auto-initialize if not initialized
-    if not softwareZBuffer then
+    if not zbufferPtr then
         renderer_dda.init(RENDER_WIDTH, RENDER_HEIGHT)
     end
 
-    -- Clear z-buffer
-    for i = 1, RENDER_WIDTH * RENDER_HEIGHT do
-        softwareZBuffer[i] = math.huge
-    end
+    -- Reset stats
+    stats.trianglesDrawn = 0
+    stats.pixelsDrawn = 0
+    stats.trianglesCulled = 0
+    stats.trianglesClipped = 0
 
-    -- Clear image data to black
-    softwareImageData:mapPixel(function() return 0, 0, 0, 1 end)
+    -- Clear z-buffer using FFI (optimized with ffi.fill)
+    ffi.fill(zbufferPtr, RENDER_WIDTH * RENDER_HEIGHT * ffi.sizeof("float"), 0x7F)  -- Max float pattern
+
+    -- Clear framebuffer to black (RGBA format) - optimized with ffi.fill
+    ffi.fill(framebufferPtr, RENDER_WIDTH * RENDER_HEIGHT * 4, 0)
+
+    -- Set alpha channel to 255
+    for i = 3, RENDER_WIDTH * RENDER_HEIGHT * 4 - 1, 4 do
+        framebufferPtr[i] = 255
+    end
 end
 
--- Set pixel with Z-buffer test
+function renderer_dda.getStats()
+    return stats
+end
+
+-- Set pixel with Z-buffer test (FFI optimized)
 local function setPixel(x, y, z, r, g, b)
     if x < 0 or x >= RENDER_WIDTH or y < 0 or y >= RENDER_HEIGHT then
         return
     end
 
-    local index = math.floor(y) * RENDER_WIDTH + math.floor(x) + 1
+    local xi = math.floor(x)
+    local yi = math.floor(y)
+    local index = yi * RENDER_WIDTH + xi
 
-    if z < softwareZBuffer[index] then
-        softwareZBuffer[index] = z
-        softwareImageData:setPixel(math.floor(x), math.floor(y), r, g, b, 1)
+    if z < zbufferPtr[index] then
+        zbufferPtr[index] = z
+
+        -- Write pixel directly to framebuffer (RGBA8)
+        local pixelIndex = index * 4
+        framebufferPtr[pixelIndex] = r * 255
+        framebufferPtr[pixelIndex + 1] = g * 255
+        framebufferPtr[pixelIndex + 2] = b * 255
+        framebufferPtr[pixelIndex + 3] = 255
     end
 end
 
@@ -72,10 +115,13 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
     local cross = edge1x * edge2y - edge1y * edge2x
 
     if cross <= 0 then
+        stats.trianglesCulled = stats.trianglesCulled + 1
         return  -- Back-facing, skip rendering
     end
 
-    -- Get texture dimensions
+    stats.trianglesDrawn = stats.trianglesDrawn + 1
+
+    -- Get texture dimensions and FFI pointer
     local texWidth, texHeight
 
     -- Handle both Image and ImageData
@@ -83,7 +129,9 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
         -- ImageData was provided
         texWidth = texData:getWidth()
         texHeight = texData:getHeight()
-        -- print(string.format("  [DDA] Texture: %dx%d", texWidth, texHeight))
+
+        -- Get FFI pointer to texture data for fast sampling
+        texturePtr = ffi.cast("uint8_t*", texData:getFFIPointer())
     elseif texture then
         -- Only Image provided, try to get its data
         texWidth = texture:getWidth()
@@ -93,6 +141,7 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
         if not texData then
             error("renderer_dda.drawTriangle requires ImageData - pass it as 4th parameter")
         end
+        texturePtr = ffi.cast("uint8_t*", texData:getFFIPointer())
     else
         error("No texture provided to drawTriangle")
     end
@@ -262,36 +311,44 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
                 if draw_max_x > clip_max_x then draw_max_x = clip_max_x end
             end
 
-            -- Draw horizontal span
-            local pixelsDrawn = 0
+            -- Draw horizontal span (FFI optimized)
             while col < draw_max_x do
                 -- Recover U and V from perspective-correct interpolation
                 local z_recip = 1 / tex_w
                 local u = tex_u * z_recip
                 local v = tex_v * z_recip
 
-                -- Debug first pixel
-                -- if pixelsDrawn == 0 and row == draw_min_y then
-                --     print(string.format("  [DDA] First pixel: u=%.2f v=%.2f tex_w=%.4f", u, v, tex_w))
-                -- end
-
                 -- Sample texture with clamping
                 local texX = math.floor(u % texWidth)
                 local texY = math.floor(v % texHeight)
-                pixelsDrawn = pixelsDrawn + 1
 
                 if texX < 0 then texX = 0 end
                 if texX >= texWidth then texX = texWidth - 1 end
                 if texY < 0 then texY = 0 end
                 if texY >= texHeight then texY = texHeight - 1 end
 
-                -- Write pixel with Z-buffer test (inline for performance)
+                -- Bounds check
                 if col >= 0 and col < RENDER_WIDTH and row >= 0 and row < RENDER_HEIGHT then
-                    local index = row * RENDER_WIDTH + col + 1
-                    if tex_z < softwareZBuffer[index] then
-                        softwareZBuffer[index] = tex_z
-                        local r, g, b = texData:getPixel(texX, texY)
-                        softwareImageData:setPixel(col, row, r, g, b, 1)
+                    local index = row * RENDER_WIDTH + col
+
+                    -- Z-buffer test
+                    if tex_z < zbufferPtr[index] then
+                        zbufferPtr[index] = tex_z
+
+                        -- Sample texture using FFI (RGBA format)
+                        local texIndex = (texY * texWidth + texX) * 4
+                        local r = texturePtr[texIndex]
+                        local g = texturePtr[texIndex + 1]
+                        local b = texturePtr[texIndex + 2]
+
+                        -- Write to framebuffer
+                        local pixelIndex = index * 4
+                        framebufferPtr[pixelIndex] = r
+                        framebufferPtr[pixelIndex + 1] = g
+                        framebufferPtr[pixelIndex + 2] = b
+                        framebufferPtr[pixelIndex + 3] = 255
+
+                        stats.pixelsDrawn = stats.pixelsDrawn + 1
                     end
                 end
 

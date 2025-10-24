@@ -1,12 +1,14 @@
 -- Simple Test Scene - Single Spinning Cube with DDA Renderer
+local config = require("config")
 local mat4 = require("mat4")
 local camera = require("camera")
 local renderer_dda = require("renderer_dda")
 local obj_loader = require("obj_loader")
+local GIF = require("gif")
 
 -- Rendering constants
-local RENDER_WIDTH = 960
-local RENDER_HEIGHT = 540
+local RENDER_WIDTH = config.RENDER_WIDTH
+local RENDER_HEIGHT = config.RENDER_HEIGHT
 
 local cam
 local shipTexture, shipTextureData
@@ -16,6 +18,8 @@ local time = 0
 local renderCanvas
 local renderImage
 local shipModel
+local gifRecorder = nil
+local isRecording = false
 
 function love.load()
     love.window.setTitle("Test Cube - DDA Renderer")
@@ -89,10 +93,10 @@ function love.draw()
         local v1 = shipModel.vertices[tri[1]]
         local v2 = shipModel.vertices[tri[2]]
         local v3 = shipModel.vertices[tri[3]]
-        renderer_dda.drawTriangle3D(v1, v2, v3, texture, textureData)
+        renderer_dda.drawTriangle3D(v1, v2, v3, shipTexture, shipTextureData)
     end
 
-    -- Draw two test cubes on the sides
+    -- Draw two test cubes on the sides with different textures
     local cubeFaces = {
         {{pos = {-0.5, -0.5,  0.5}, uv = {0, 0}}, {pos = { 0.5, -0.5,  0.5}, uv = {1, 0}}, {pos = { 0.5,  0.5,  0.5}, uv = {1, 1}}, {pos = {-0.5,  0.5,  0.5}, uv = {0, 1}}},
         {{pos = { 0.5, -0.5, -0.5}, uv = {0, 0}}, {pos = {-0.5, -0.5, -0.5}, uv = {1, 0}}, {pos = {-0.5,  0.5, -0.5}, uv = {1, 1}}, {pos = { 0.5,  0.5, -0.5}, uv = {0, 1}}},
@@ -112,23 +116,40 @@ function love.draw()
         local cubeMvpMatrix = mat4.multiply(projectionMatrix, mat4.multiply(viewMatrix, cubeModelMatrix))
         renderer_dda.setMatrices(cubeMvpMatrix, cam.pos)
 
+        -- Use different texture for each cube
+        local cubeTex = (cubeIndex == 1) and cubeTexture1 or cubeTexture2
+        local cubeTexData = (cubeIndex == 1) and cubeTextureData1 or cubeTextureData2
+
         for _, face in ipairs(cubeFaces) do
-            renderer_dda.drawTriangle3D(face[1], face[2], face[3], texture, textureData)
-            renderer_dda.drawTriangle3D(face[1], face[3], face[4], texture, textureData)
+            renderer_dda.drawTriangle3D(face[1], face[2], face[3], cubeTex, cubeTexData)
+            renderer_dda.drawTriangle3D(face[1], face[3], face[4], cubeTex, cubeTexData)
         end
     end
 
     -- Update existing image (much faster than creating new one)
     renderImage:replacePixels(renderer_dda.getImageData())
 
-    -- Draw to canvas
+    local windowWidth, windowHeight = love.graphics.getDimensions()
+
+    -- Draw to canvas (including UI for GIF capture)
     love.graphics.setCanvas(renderCanvas)
     love.graphics.clear(0, 0, 0)
     love.graphics.draw(renderImage, 0, 0)
+
+    -- Draw UI directly to canvas
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 10)
+    love.graphics.print("Ship + 2 Cubes - " .. (#shipModel.triangles + 24) .. " triangles", 10, 30)
+    love.graphics.print("Camera: " .. string.format("(%.1f, %.1f, %.1f)", cam.pos.x, cam.pos.y, cam.pos.z), 10, 50)
+    love.graphics.print("Yaw: " .. string.format("%.2f", cam.yaw) .. " Pitch: " .. string.format("%.2f", cam.pitch), 10, 70)
+
+    if isRecording then
+        love.graphics.print("[RECORDING] Frames: " .. #gifRecorder.frames, 10, RENDER_HEIGHT - 20)
+    end
+
     love.graphics.setCanvas()
 
     -- Draw canvas to screen
-    local windowWidth, windowHeight = love.graphics.getDimensions()
     local scaleX = windowWidth / RENDER_WIDTH
     local scaleY = windowHeight / RENDER_HEIGHT
     local scale = math.min(scaleX, scaleY)
@@ -138,18 +159,37 @@ function love.draw()
     love.graphics.setColor(1, 1, 1)
     love.graphics.draw(renderCanvas, offsetX, offsetY, 0, scale, scale)
 
-    -- Draw UI
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 10)
-    love.graphics.print("Ship + 2 Cubes - " .. (#shipModel.triangles + 24) .. " triangles", 10, 30)
-    love.graphics.print("Camera: " .. string.format("(%.1f, %.1f, %.1f)", cam.pos.x, cam.pos.y, cam.pos.z), 10, 50)
-    love.graphics.print("Yaw: " .. string.format("%.2f", cam.yaw) .. " Pitch: " .. string.format("%.2f", cam.pitch), 10, 70)
-    love.graphics.print("WASD: Move | Arrows: Look | Space/Shift: Up/Down | ESC: Quit", 10, windowHeight - 30)
+    -- Capture frame for GIF AFTER all drawing is done
+    if isRecording and gifRecorder then
+        -- Capture the canvas with UI included
+        local frameCapture = renderCanvas:newImageData()
+        gifRecorder:addFrame(frameCapture)
+    end
 end
 
 function love.keypressed(key)
     if key == "escape" then
-        love.event.quit()
+        local scene_manager = require("scene_manager")
+        scene_manager.switch("menu")
+    elseif key == "f8" then
+        if not isRecording then
+            -- Start recording
+            gifRecorder = GIF.new(RENDER_WIDTH, RENDER_HEIGHT, 3)
+            isRecording = true
+            print("Started GIF recording")
+        else
+            -- Stop recording and save
+            isRecording = false
+            local filename = "test_cube_" .. os.time() .. ".gif"
+            gifRecorder:save(filename)
+            print("Saved GIF: " .. filename .. " (" .. #gifRecorder.frames .. " frames)")
+            gifRecorder = nil
+        end
+    elseif key == "f9" then
+        -- Open the save directory where GIFs are stored
+        local saveDir = love.filesystem.getSaveDirectory()
+        print("Opening save directory: " .. saveDir)
+        os.execute('start "" "' .. saveDir .. '"')
     end
 end
 

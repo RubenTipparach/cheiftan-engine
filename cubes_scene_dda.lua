@@ -1,17 +1,20 @@
 -- 5000 Cubes Scene with DDA Renderer
 -- Converted from main.lua to use new DDA scanline renderer
 
+local config = require("config")
 local mat4 = require("mat4")
 local camera = require("camera")
 local mesh = require("mesh")
 local renderer_dda = require("renderer_dda")
 local profiler = require("profiler")
+local GIF = require("gif")
 
 -- Rendering constants
-local RENDER_WIDTH = 960
-local RENDER_HEIGHT = 540
-local NUM_CUBES = 5000
+local RENDER_WIDTH = config.RENDER_WIDTH
+local RENDER_HEIGHT = config.RENDER_HEIGHT
+local NUM_CUBES = 1000
 local renderCanvas
+local renderImage
 
 local cam
 
@@ -22,9 +25,11 @@ local cubes = {}
 local cube = nil
 local texture
 local textureData
+local gifRecorder = nil
+local isRecording = false
 
 function love.load()
-    love.window.setTitle("5000 Cubes - DDA Renderer")
+    love.window.setTitle("1000 Cubes - DDA Renderer")
 
     -- Initialize DDA renderer
     renderer_dda.init(RENDER_WIDTH, RENDER_HEIGHT)
@@ -64,6 +69,10 @@ function love.load()
         })
     end
     print("Generated " .. #cubes .. " cubes")
+
+    -- Create reusable render image
+    renderImage = love.graphics.newImage(renderer_dda.getImageData())
+    renderImage:setFilter("nearest", "nearest")
 end
 
 function love.update(dt)
@@ -130,76 +139,59 @@ function love.draw()
                            cz >= -margin and cz <= cw + margin
 
         if cubeVisible then
-            -- Process each triangle
+            -- Set matrices for this cube
+            renderer_dda.setMatrices(mvpMatrix, cam.pos)
+
+            -- Draw all triangles with automatic clipping and backface culling
             for _, tri in ipairs(cube.triangles) do
                 local v1 = cube.vertices[tri[1]]
                 local v2 = cube.vertices[tri[2]]
                 local v3 = cube.vertices[tri[3]]
 
-                -- Transform vertices
-                local p1 = mat4.multiplyVec4(mvpMatrix, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
-                local p2 = mat4.multiplyVec4(mvpMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
-                local p3 = mat4.multiplyVec4(mvpMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
-
-                -- Skip if all behind camera
-                if p1[4] > 0 or p2[4] > 0 or p3[4] > 0 then
-                    -- Project to screen space
-                    local s1x = (p1[1] / p1[4] + 1) * RENDER_WIDTH * 0.5
-                    local s1y = (1 - p1[2] / p1[4]) * RENDER_HEIGHT * 0.5
-                    local s2x = (p2[1] / p2[4] + 1) * RENDER_WIDTH * 0.5
-                    local s2y = (1 - p2[2] / p2[4]) * RENDER_HEIGHT * 0.5
-                    local s3x = (p3[1] / p3[4] + 1) * RENDER_WIDTH * 0.5
-                    local s3y = (1 - p3[2] / p3[4]) * RENDER_HEIGHT * 0.5
-
-                    -- Prepare vertex data for DDA renderer
-                    local w1 = 1 / p1[4]
-                    local w2 = 1 / p2[4]
-                    local w3 = 1 / p3[4]
-
-                    -- Get texture dimensions
-                    local texW = textureData:getWidth()
-                    local texH = textureData:getHeight()
-
-                    local vA = {
-                        s1x, s1y,
-                        w1,
-                        v1.uv[1] * texW * w1, v1.uv[2] * texH * w1,
-                        p1[3] / p1[4]
-                    }
-                    local vB = {
-                        s2x, s2y,
-                        w2,
-                        v2.uv[1] * texW * w2, v2.uv[2] * texH * w2,
-                        p2[3] / p2[4]
-                    }
-                    local vC = {
-                        s3x, s3y,
-                        w3,
-                        v3.uv[1] * texW * w3, v3.uv[2] * texH * w3,
-                        p3[3] / p3[4]
-                    }
-
-                    renderer_dda.drawTriangle(vA, vB, vC, texture, textureData)
-                    trianglesDrawn = trianglesDrawn + 1
-                end
+                renderer_dda.drawTriangle3D(v1, v2, v3, texture, textureData)
+                trianglesDrawn = trianglesDrawn + 1
             end
         end
     end
     profiler.stop("render_cubes")
 
-    -- Convert ImageData to texture and draw
+    -- Update existing image (much faster than creating new one)
     profiler.start("convert_draw")
-    local img = love.graphics.newImage(renderer_dda.getImageData())
-    img:setFilter("nearest", "nearest")
+    renderImage:replacePixels(renderer_dda.getImageData())
 
-    -- Draw to canvas
+    local windowWidth, windowHeight = love.graphics.getDimensions()
+    local renderStats = renderer_dda.getStats()
+
+    -- Draw to canvas (including UI for GIF capture)
     love.graphics.setCanvas(renderCanvas)
     love.graphics.clear(0, 0, 0)
-    love.graphics.draw(img, 0, 0)
+    love.graphics.draw(renderImage, 0, 0)
+
+    -- Draw UI directly to canvas
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("DDA RENDERER - 1000 Cubes", 10, 10)
+    love.graphics.print("Cubes: " .. #cubes, 10, 30)
+    love.graphics.print("Triangles: " .. trianglesDrawn .. " (Drawn: " .. renderStats.trianglesDrawn .. ", Culled: " .. renderStats.trianglesCulled .. ")", 10, 50)
+    love.graphics.print("Pixels: " .. renderStats.pixelsDrawn, 10, 70)
+    love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 90)
+
+    -- Profiler
+    local blue = {0.4, 0.6, 1.0}
+    local y = 110
+    y = profiler.draw("matrices", 10, y)
+    y = profiler.draw("cube_sort", 10, y)
+    y = profiler.draw("render_cubes", 10, y)
+    y = profiler.draw("convert_draw", 10, y)
+    y = y + 5
+    profiler.draw("total", 10, y)
+
+    if isRecording then
+        love.graphics.print("[RECORDING] Frames: " .. #gifRecorder.frames, 10, RENDER_HEIGHT - 20)
+    end
+
     love.graphics.setCanvas()
 
     -- Draw canvas to screen
-    local windowWidth, windowHeight = love.graphics.getDimensions()
     local scaleX = windowWidth / RENDER_WIDTH
     local scaleY = windowHeight / RENDER_HEIGHT
     local scale = math.min(scaleX, scaleY)
@@ -210,32 +202,39 @@ function love.draw()
     love.graphics.draw(renderCanvas, offsetX, offsetY, 0, scale, scale)
     profiler.stop("convert_draw")
 
-    -- Draw UI
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("DDA RENDERER - 5000 Cubes", 10, 10)
-    love.graphics.print("Cubes: " .. #cubes, 10, 30)
-    love.graphics.print("Triangles: " .. trianglesDrawn, 10, 50)
-    love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 70)
-
-    -- Profiler
-    local blue = {0.4, 0.6, 1.0}
-    local y = 90
-    y = profiler.draw("matrices", 10, y)
-    y = profiler.draw("cube_sort", 10, y)
-    y = profiler.draw("render_cubes", 10, y)
-    y = profiler.draw("convert_draw", 10, y)
-    y = y + 5
-    profiler.draw("total", 10, y)
-
-    -- Controls
-    love.graphics.print("WASD: Move | Arrows: Rotate | ESC: Menu", 10, windowHeight - 20)
-
     profiler.endFrame()
+
+    -- Capture frame for GIF AFTER all drawing is done
+    if isRecording and gifRecorder then
+        -- Capture the canvas with UI included
+        local frameCapture = renderCanvas:newImageData()
+        gifRecorder:addFrame(frameCapture)
+    end
 end
 
 function love.keypressed(key)
     if key == "escape" then
-        love.event.quit()
+        local scene_manager = require("scene_manager")
+        scene_manager.switch("menu")
+    elseif key == "f8" then
+        if not isRecording then
+            -- Start recording
+            gifRecorder = GIF.new(RENDER_WIDTH, RENDER_HEIGHT, 3)
+            isRecording = true
+            print("Started GIF recording")
+        else
+            -- Stop recording and save
+            isRecording = false
+            local filename = "1000cubes_" .. os.time() .. ".gif"
+            gifRecorder:save(filename)
+            print("Saved GIF: " .. filename .. " (" .. #gifRecorder.frames .. " frames)")
+            gifRecorder = nil
+        end
+    elseif key == "f9" then
+        -- Open the save directory where GIFs are stored
+        local saveDir = love.filesystem.getSaveDirectory()
+        print("Opening save directory: " .. saveDir)
+        os.execute('start "" "' .. saveDir .. '"')
     end
 end
 

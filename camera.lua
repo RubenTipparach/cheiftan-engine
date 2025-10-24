@@ -48,13 +48,13 @@ function camera.update(cam, dt, moveSpeed, rotSpeed)
     moveSpeed = moveSpeed or 5.0
     rotSpeed = rotSpeed or 2.0
 
-    -- Rotation with arrow keys
+    -- Rotation with arrow keys (inverted left/right)
     if love.keyboard.isDown("left") then
-        cam.yaw = cam.yaw - rotSpeed * dt
+        cam.yaw = cam.yaw + rotSpeed * dt
         camera.updateVectors(cam)
     end
     if love.keyboard.isDown("right") then
-        cam.yaw = cam.yaw + rotSpeed * dt
+        cam.yaw = cam.yaw - rotSpeed * dt
         camera.updateVectors(cam)
     end
     if love.keyboard.isDown("up") then

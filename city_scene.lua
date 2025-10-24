@@ -1,28 +1,27 @@
 -- City Scene for DDA Renderer Validation
 -- Creates a city with cube buildings and a low-poly sphere
 
+local config = require("config")
 local mat4 = require("mat4")
-local vec3 = require("vec3")
+local camera = require("camera")
 local mesh = require("mesh")
 local renderer_dda = require("renderer_dda")
 local profiler = require("profiler")
+local GIF = require("gif")
 
 -- Rendering constants
-local RENDER_WIDTH = 960
-local RENDER_HEIGHT = 540
+local RENDER_WIDTH = config.RENDER_WIDTH
+local RENDER_HEIGHT = config.RENDER_HEIGHT
 local renderCanvas
+local renderImage
 
--- Camera
-local camera = {
-    pos = vec3.new(0, 5, -20),
-    rotation = {x = 0, y = 0, z = 0}
-}
+local cam
 
 local time = 0
 
 -- Scene objects
 local buildings = {}
-local sphere = nil
+local groundSpheres = {}
 local ground = nil
 
 -- Textures
@@ -30,6 +29,10 @@ local texture1
 local texture2
 local textureData1
 local textureData2
+
+-- GIF recording
+local gifRecorder = nil
+local isRecording = false
 
 function love.load()
     love.window.setTitle("City Scene - DDA Renderer Validation")
@@ -52,6 +55,14 @@ function love.load()
     texture2:setFilter("nearest", "nearest")
 
     print("Textures loaded")
+
+    -- Initialize camera
+    cam = camera.new(0, 5, -20)
+    camera.updateVectors(cam)
+
+    -- Create reusable render image
+    renderImage = love.graphics.newImage(renderer_dda.getImageData())
+    renderImage:setFilter("nearest", "nearest")
 
     -- Create buildings (cubes at various positions)
     local cube = mesh.createCube()
@@ -111,31 +122,93 @@ function love.load()
         textureData = textureData1
     })
 
-    -- Create a low-poly sphere (sun/moon)
-    sphere = {
-        mesh = mesh.createSphere(8, 6),
-        x = 10,
-        y = 15,
-        z = 20,
-        scale = 2,
+    -- Create ground spheres (half-buried, stationary)
+    -- Use lower poly count for performance (6x6 = 72 tris each)
+    local sphereMesh = mesh.createSphere(6, 6)
+
+    -- Place spheres at various positions, half-buried in ground
+    table.insert(groundSpheres, {
+        mesh = sphereMesh,
+        x = -10,
+        y = -1.5,  -- Half-buried
+        z = 15,
+        scale = 3,
+        texture = texture1,
+        textureData = textureData1,
+        rotSpeed = 0.1
+    })
+
+    table.insert(groundSpheres, {
+        mesh = sphereMesh,
+        x = 12,
+        y = -2,
+        z = 25,
+        scale = 4,
         texture = texture2,
-        textureData = textureData2
+        textureData = textureData2,
+        rotSpeed = -0.08
+    })
+
+    table.insert(groundSpheres, {
+        mesh = sphereMesh,
+        x = 0,
+        y = -1,
+        z = 8,
+        scale = 2,
+        texture = texture1,
+        textureData = textureData1,
+        rotSpeed = 0.12
+    })
+
+    table.insert(groundSpheres, {
+        mesh = sphereMesh,
+        x = -15,
+        y = -2.5,
+        z = 30,
+        scale = 5,
+        texture = texture2,
+        textureData = textureData2,
+        rotSpeed = 0.05
+    })
+
+    -- Create subdivided ground plane (10x10 grid for better culling)
+    ground = {
+        triangles = {},
+        vertices = {}
     }
 
-    -- Create ground plane (2 large triangles)
-    ground = {
-        triangles = {
-            {1, 2, 3},
-            {1, 3, 4}
-        },
-        vertices = {
-            {pos = {-50, 0, -10}, uv = {0, 0}},
-            {pos = {50, 0, -10}, uv = {25, 0}},
-            {pos = {50, 0, 50}, uv = {25, 30}},
-            {pos = {-50, 0, 50}, uv = {0, 30}}
-        },
-        texture = texture1
-    }
+    local gridSize = 10
+    local groundWidth = 100  -- -50 to 50
+    local groundDepth = 60   -- -10 to 50
+    local startX = -50
+    local startZ = -10
+    local stepX = groundWidth / gridSize
+    local stepZ = groundDepth / gridSize
+
+    -- Generate vertices
+    for z = 0, gridSize do
+        for x = 0, gridSize do
+            local worldX = startX + x * stepX
+            local worldZ = startZ + z * stepZ
+            local u = (x / gridSize) * 25
+            local v = (z / gridSize) * 30
+            table.insert(ground.vertices, {pos = {worldX, 0, worldZ}, uv = {u, v}})
+        end
+    end
+
+    -- Generate triangles (CCW winding for upward-facing normals)
+    for z = 0, gridSize - 1 do
+        for x = 0, gridSize - 1 do
+            local topLeft = z * (gridSize + 1) + x + 1
+            local topRight = topLeft + 1
+            local bottomLeft = (z + 1) * (gridSize + 1) + x + 1
+            local bottomRight = bottomLeft + 1
+
+            -- Two triangles per grid square (reversed winding for CCW)
+            table.insert(ground.triangles, {topLeft, topRight, bottomLeft})
+            table.insert(ground.triangles, {topRight, bottomRight, bottomLeft})
+        end
+    end
 
     print("City scene created with " .. #buildings .. " buildings")
 end
@@ -143,56 +216,8 @@ end
 function love.update(dt)
     time = time + dt
 
-    -- Camera rotation with arrow keys
-    if love.keyboard.isDown("left") then
-        camera.rotation.y = camera.rotation.y - dt * 2
-    end
-    if love.keyboard.isDown("right") then
-        camera.rotation.y = camera.rotation.y + dt * 2
-    end
-    if love.keyboard.isDown("up") then
-        camera.rotation.x = camera.rotation.x - dt * 2
-    end
-    if love.keyboard.isDown("down") then
-        camera.rotation.x = camera.rotation.x + dt * 2
-    end
-
-    -- Camera movement
-    local moveSpeed = 10
-    local yaw = camera.rotation.y
-    local forwardX = math.sin(yaw)
-    local forwardZ = math.cos(yaw)
-    local rightX = math.cos(yaw)
-    local rightZ = -math.sin(yaw)
-
-    if love.keyboard.isDown("w") then
-        camera.pos.x = camera.pos.x + forwardX * moveSpeed * dt
-        camera.pos.z = camera.pos.z + forwardZ * moveSpeed * dt
-    end
-    if love.keyboard.isDown("s") then
-        camera.pos.x = camera.pos.x - forwardX * moveSpeed * dt
-        camera.pos.z = camera.pos.z - forwardZ * moveSpeed * dt
-    end
-    if love.keyboard.isDown("a") then
-        camera.pos.x = camera.pos.x - rightX * moveSpeed * dt
-        camera.pos.z = camera.pos.z - rightZ * moveSpeed * dt
-    end
-    if love.keyboard.isDown("d") then
-        camera.pos.x = camera.pos.x + rightX * moveSpeed * dt
-        camera.pos.z = camera.pos.z + rightZ * moveSpeed * dt
-    end
-    if love.keyboard.isDown("space") then
-        camera.pos.y = camera.pos.y + moveSpeed * dt
-    end
-    if love.keyboard.isDown("lshift") then
-        camera.pos.y = camera.pos.y - moveSpeed * dt
-    end
-
-    -- Rotate sphere
-    if sphere then
-        sphere.x = 10 * math.cos(time * 0.3)
-        sphere.z = 20 + 5 * math.sin(time * 0.3)
-    end
+    -- Update camera
+    camera.update(cam, dt, 10.0, 2.0)
 end
 
 function love.draw()
@@ -203,11 +228,7 @@ function love.draw()
 
     profiler.start("matrices")
     -- Create view and projection matrices
-    local viewMatrix = mat4.identity()
-    viewMatrix = mat4.multiply(viewMatrix, mat4.rotationX(camera.rotation.x))
-    viewMatrix = mat4.multiply(viewMatrix, mat4.rotationY(camera.rotation.y))
-    viewMatrix = mat4.multiply(viewMatrix, mat4.translation(camera.pos.x, camera.pos.y, camera.pos.z))
-
+    local viewMatrix = camera.getViewMatrix(cam)
     local projectionMatrix = mat4.perspective(70, RENDER_WIDTH/RENDER_HEIGHT, 0.1, 100)
     local vpMatrix = mat4.multiply(projectionMatrix, viewMatrix)
     profiler.stop("matrices")
@@ -215,77 +236,57 @@ function love.draw()
     profiler.start("render_scene")
     local trianglesDrawn = 0
 
-    -- Helper function to transform and draw mesh
-    local function drawMesh(meshData, modelMatrix, texture, texData)
+    -- Helper function to transform and draw mesh using new API
+    local function drawMesh(meshData, modelMatrix, texture, texData, skipCulling)
         local mvpMatrix = mat4.multiply(vpMatrix, modelMatrix)
+
+        -- Screen-space bounding box culling (skip for large objects like ground plane)
+        if not skipCulling then
+            -- Transform all vertices and compute AABB in clip space
+            local minX, minY, minZ = math.huge, math.huge, math.huge
+            local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+            local allBehindCamera = true
+
+            for _, vertex in ipairs(meshData.vertices) do
+                local pos = vertex.pos
+                local clipPos = mat4.multiplyVec4(mvpMatrix, {pos[1], pos[2], pos[3], 1})
+                local cx, cy, cz, cw = clipPos[1], clipPos[2], clipPos[3], clipPos[4]
+
+                if cw > 0.01 then
+                    allBehindCamera = false
+                    -- Perspective divide to get NDC
+                    local ndcX = cx / cw
+                    local ndcY = cy / cw
+                    local ndcZ = cz / cw
+
+                    minX = math.min(minX, ndcX)
+                    maxX = math.max(maxX, ndcX)
+                    minY = math.min(minY, ndcY)
+                    maxY = math.max(maxY, ndcY)
+                    minZ = math.min(minZ, ndcZ)
+                    maxZ = math.max(maxZ, ndcZ)
+                end
+            end
+
+            -- Cull if entire mesh is behind camera or outside frustum
+            if allBehindCamera or maxX < -1 or minX > 1 or maxY < -1 or minY > 1 or maxZ < -1 or minZ > 1 then
+                return
+            end
+        end
+
+        renderer_dda.setMatrices(mvpMatrix, cam.pos)
 
         for _, tri in ipairs(meshData.triangles) do
             local v1 = meshData.vertices[tri[1]]
             local v2 = meshData.vertices[tri[2]]
             local v3 = meshData.vertices[tri[3]]
 
-            -- Transform vertices
-            local p1 = mat4.multiplyVec4(mvpMatrix, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
-            local p2 = mat4.multiplyVec4(mvpMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
-            local p3 = mat4.multiplyVec4(mvpMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
-
-            -- Skip if all behind camera
-            if p1[4] <= 0 and p2[4] <= 0 and p3[4] <= 0 then
-                goto continue
-            end
-
-            -- Project to screen space
-            local s1x = (p1[1] / p1[4] + 1) * RENDER_WIDTH * 0.5
-            local s1y = (1 - p1[2] / p1[4]) * RENDER_HEIGHT * 0.5
-            local s2x = (p2[1] / p2[4] + 1) * RENDER_WIDTH * 0.5
-            local s2y = (1 - p2[2] / p2[4]) * RENDER_HEIGHT * 0.5
-            local s3x = (p3[1] / p3[4] + 1) * RENDER_WIDTH * 0.5
-            local s3y = (1 - p3[2] / p3[4]) * RENDER_HEIGHT * 0.5
-
-            -- Backface culling
-            local edge1x = s2x - s1x
-            local edge1y = s2y - s1y
-            local edge2x = s3x - s1x
-            local edge2y = s3y - s1y
-            local cross = edge1x * edge2y - edge1y * edge2x
-
-            if cross >= 0 then
-                goto continue
-            end
-
-            -- Prepare vertex data for DDA renderer
-            -- Format: {x, y, w, u_over_w, v_over_w, z}
-            local w1 = 1 / p1[4]
-            local w2 = 1 / p2[4]
-            local w3 = 1 / p3[4]
-
-            local vA = {
-                s1x, s1y,
-                w1,
-                v1.uv[1] * w1, v1.uv[2] * w1,
-                p1[3] / p1[4]
-            }
-            local vB = {
-                s2x, s2y,
-                w2,
-                v2.uv[1] * w2, v2.uv[2] * w2,
-                p2[3] / p2[4]
-            }
-            local vC = {
-                s3x, s3y,
-                w3,
-                v3.uv[1] * w3, v3.uv[2] * w3,
-                p3[3] / p3[4]
-            }
-
-            renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
+            renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData)
             trianglesDrawn = trianglesDrawn + 1
-
-            ::continue::
         end
     end
 
-    -- Draw ground
+    -- Draw ground (now uses per-triangle culling)
     profiler.start("  ground")
     local groundModel = mat4.identity()
     drawMesh(ground, groundModel, texture1, textureData1)
@@ -300,31 +301,57 @@ function love.draw()
     end
     profiler.stop("  buildings")
 
-    -- Draw sphere
-    if sphere and sphere.mesh then
-        profiler.start("  sphere")
-        local sphereModel = mat4.translation(sphere.x, sphere.y, sphere.z)
-        sphereModel = mat4.multiply(sphereModel, mat4.scale(sphere.scale, sphere.scale, sphere.scale))
-        sphereModel = mat4.multiply(sphereModel, mat4.rotationY(time))
-        drawMesh(sphere.mesh, sphereModel, sphere.texture, sphere.textureData)
-        profiler.stop("  sphere")
+    -- Draw ground spheres (stationary, slowly spinning)
+    profiler.start("  spheres")
+    for _, sph in ipairs(groundSpheres) do
+        local sphereModel = mat4.translation(sph.x, sph.y, sph.z)
+        sphereModel = mat4.multiply(sphereModel, mat4.scale(sph.scale, sph.scale, sph.scale))
+        sphereModel = mat4.multiply(sphereModel, mat4.rotationY(time * sph.rotSpeed))
+        drawMesh(sph.mesh, sphereModel, sph.texture, sph.textureData)
     end
+    profiler.stop("  spheres")
 
     profiler.stop("render_scene")
 
-    -- Convert ImageData to texture and draw
+    -- Update existing image (much faster than creating new one)
     profiler.start("convert_draw")
-    local img = love.graphics.newImage(renderer_dda.getImageData())
-    img:setFilter("nearest", "nearest")
+    renderImage:replacePixels(renderer_dda.getImageData())
 
-    -- Draw to canvas
+    -- Get stats for UI
+    local renderStats = renderer_dda.getStats()
+    local windowWidth, windowHeight = love.graphics.getDimensions()
+
+    -- Draw to canvas (including UI for GIF capture)
     love.graphics.setCanvas(renderCanvas)
     love.graphics.clear(0, 0, 0)
-    love.graphics.draw(img, 0, 0)
+    love.graphics.draw(renderImage, 0, 0)
+
+    -- Draw UI directly to canvas
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("DDA SCANLINE RENDERER - City Scene", 10, 10)
+    love.graphics.print("Triangles: " .. trianglesDrawn .. " (Drawn: " .. renderStats.trianglesDrawn .. ", Culled: " .. renderStats.trianglesCulled .. ")", 10, 30)
+    love.graphics.print("Pixels: " .. renderStats.pixelsDrawn, 10, 50)
+    love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 70)
+    love.graphics.print("Camera: (" .. math.floor(cam.pos.x) .. ", " .. math.floor(cam.pos.y) .. ", " .. math.floor(cam.pos.z) .. ")", 10, 90)
+
+    -- Profiler
+    local y = 110
+    y = profiler.draw("matrices", 10, y)
+    y = profiler.draw("render_scene", 10, y)
+    y = profiler.draw("  ground", 10, y, {0.4, 0.6, 1.0})
+    y = profiler.draw("  buildings", 10, y, {0.4, 0.6, 1.0})
+    y = profiler.draw("  spheres", 10, y, {0.4, 0.6, 1.0})
+    y = profiler.draw("convert_draw", 10, y)
+    y = y + 5
+    profiler.draw("total", 10, y)
+
+    if isRecording then
+        love.graphics.print("[RECORDING] Frames: " .. #gifRecorder.frames, 10, RENDER_HEIGHT - 20)
+    end
+
     love.graphics.setCanvas()
 
     -- Draw canvas to screen
-    local windowWidth, windowHeight = love.graphics.getDimensions()
     local scaleX = windowWidth / RENDER_WIDTH
     local scaleY = windowHeight / RENDER_HEIGHT
     local scale = math.min(scaleX, scaleY)
@@ -335,34 +362,39 @@ function love.draw()
     love.graphics.draw(renderCanvas, offsetX, offsetY, 0, scale, scale)
     profiler.stop("convert_draw")
 
-    -- Draw UI
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.print("DDA SCANLINE RENDERER", 10, 10)
-    love.graphics.print("Triangles: " .. trianglesDrawn, 10, 30)
-    love.graphics.print("FPS: " .. love.timer.getFPS(), 10, 50)
-    love.graphics.print("Camera: (" .. math.floor(camera.pos.x) .. ", " .. math.floor(camera.pos.y) .. ", " .. math.floor(camera.pos.z) .. ")", 10, 70)
-
-    -- Profiler
-    local y = 90
-    y = profiler.draw("matrices", 10, y)
-    y = profiler.draw("render_scene", 10, y)
-    y = profiler.draw("  ground", 10, y, {0.4, 0.6, 1.0})
-    y = profiler.draw("  buildings", 10, y, {0.4, 0.6, 1.0})
-    y = profiler.draw("  sphere", 10, y, {0.4, 0.6, 1.0})
-    y = profiler.draw("convert_draw", 10, y)
-    y = y + 5
-    profiler.draw("total", 10, y)
-
-    -- Controls
-    love.graphics.print("WASD: Move | Arrows: Rotate | Space/Shift: Up/Down", 10, windowHeight - 40)
-    love.graphics.print("ESC: Quit", 10, windowHeight - 20)
-
     profiler.endFrame()
+
+    -- Capture frame for GIF AFTER all drawing is done
+    if isRecording and gifRecorder then
+        -- Capture the canvas with UI included
+        local frameCapture = renderCanvas:newImageData()
+        gifRecorder:addFrame(frameCapture)
+    end
 end
 
 function love.keypressed(key)
     if key == "escape" then
-        love.event.quit()
+        local scene_manager = require("scene_manager")
+        scene_manager.switch("menu")
+    elseif key == "f8" then
+        if not isRecording then
+            -- Start recording
+            gifRecorder = GIF.new(RENDER_WIDTH, RENDER_HEIGHT, 3)
+            isRecording = true
+            print("Started GIF recording")
+        else
+            -- Stop recording and save
+            isRecording = false
+            local filename = "city_" .. os.time() .. ".gif"
+            gifRecorder:save(filename)
+            print("Saved GIF: " .. filename .. " (" .. #gifRecorder.frames .. " frames)")
+            gifRecorder = nil
+        end
+    elseif key == "f9" then
+        -- Open the save directory where GIFs are stored
+        local saveDir = love.filesystem.getSaveDirectory()
+        print("Opening save directory: " .. saveDir)
+        os.execute('start "" "' .. saveDir .. '"')
     end
 end
 
