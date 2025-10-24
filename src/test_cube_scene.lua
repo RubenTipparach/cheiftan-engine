@@ -33,16 +33,16 @@ function love.load()
     renderCanvas:setFilter("nearest", "nearest")
 
     -- Load ship texture
-    shipTextureData = love.image.newImageData("Ship_1_finish.png")
+    shipTextureData = love.image.newImageData("assets/Ship_1_finish.png")
     shipTexture = love.graphics.newImage(shipTextureData)
     shipTexture:setFilter("nearest", "nearest")
 
     -- Load cube textures
-    cubeTextureData1 = love.image.newImageData("checkered_placeholder.png")
+    cubeTextureData1 = love.image.newImageData("assets/checkered_placeholder.png")
     cubeTexture1 = love.graphics.newImage(cubeTextureData1)
     cubeTexture1:setFilter("nearest", "nearest")
 
-    cubeTextureData2 = love.image.newImageData("checkered_placeholde2r.png")
+    cubeTextureData2 = love.image.newImageData("assets/checkered_placeholde2r.png")
     cubeTexture2 = love.graphics.newImage(cubeTextureData2)
     cubeTexture2:setFilter("nearest", "nearest")
 
@@ -53,7 +53,7 @@ function love.load()
     camera.updateVectors(cam)
 
     -- Load ship model
-    shipModel = obj_loader.load("ship_1.obj")
+    shipModel = obj_loader.load("assets/ship_1.obj")
 
     -- Create reusable render image
     renderImage = love.graphics.newImage(renderer_dda.getImageData())

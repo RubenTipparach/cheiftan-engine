@@ -46,11 +46,11 @@ function love.load()
     renderCanvas:setFilter("nearest", "nearest")
 
     -- Load textures
-    textureData1 = love.image.newImageData("checkered_placeholder.png")
+    textureData1 = love.image.newImageData("assets/checkered_placeholder.png")
     texture1 = love.graphics.newImage(textureData1)
     texture1:setFilter("nearest", "nearest")
 
-    textureData2 = love.image.newImageData("checkered_placeholde2r.png")
+    textureData2 = love.image.newImageData("assets/checkered_placeholde2r.png")
     texture2 = love.graphics.newImage(textureData2)
     texture2:setFilter("nearest", "nearest")
 

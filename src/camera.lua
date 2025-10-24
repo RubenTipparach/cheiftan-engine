@@ -9,7 +9,7 @@ function camera.new(x, y, z)
     return {
         pos = vec3.new(x or 0, y or 0, z or 0),
         pitch = 0,  -- X rotation
-        yaw = 0,    -- Y rotation
+        yaw = math.pi,    -- Y rotation (180 degrees)
         forward = vec3.new(0, 0, 1),
         right = vec3.new(1, 0, 0),
         up = vec3.new(0, 1, 0)
