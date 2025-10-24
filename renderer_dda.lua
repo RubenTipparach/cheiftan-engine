@@ -32,6 +32,20 @@ local texHeight = 0
 local currentMVP = nil
 local currentCamera = nil
 
+-- Fog settings
+local fogEnabled = false
+local fogNear = 10.0
+local fogFar = 100.0
+local fogColor = {0, 0, 0}  -- RGB 0-255
+
+-- Bayer 4x4 dithering matrix for fog transitions
+local bayerMatrix = {
+    { 0,  8,  2, 10},
+    {12,  4, 14,  6},
+    { 3, 11,  1,  9},
+    {15,  7, 13,  5}
+}
+
 function renderer_dda.init(width, height)
     RENDER_WIDTH = width
     RENDER_HEIGHT = height
@@ -77,6 +91,20 @@ end
 
 function renderer_dda.getStats()
     return stats
+end
+
+-- Fog control functions
+function renderer_dda.setFog(enabled, near, far, r, g, b)
+    fogEnabled = enabled
+    if near then fogNear = near end
+    if far then fogFar = far end
+    if r then fogColor[1] = r end
+    if g then fogColor[2] = g end
+    if b then fogColor[3] = b end
+end
+
+function renderer_dda.getFogEnabled()
+    return fogEnabled
 end
 
 -- Set pixel with Z-buffer test (FFI optimized)
@@ -312,44 +340,85 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
             end
 
             -- Draw horizontal span (FFI optimized)
+            -- Pre-calculate constant values outside loop
+            local texWidthMask = texWidth - 1
+            local texHeightMask = texHeight - 1
+            local texWidthFloat = texWidth
+            local texHeightFloat = texHeight
+            local isPowerOf2Width = bit.band(texWidth, texWidthMask) == 0
+            local isPowerOf2Height = bit.band(texHeight, texHeightMask) == 0
+
             while col < draw_max_x do
-                -- Recover U and V from perspective-correct interpolation
-                local z_recip = 1 / tex_w
-                local u = tex_u * z_recip
-                local v = tex_v * z_recip
+                -- Index calculation (bounds already guaranteed by clipping)
+                local index = row * RENDER_WIDTH + col
 
-                -- Sample texture with clamping
-                local texX = math.floor(u % texWidth)
-                local texY = math.floor(v % texHeight)
+                -- Early-Z rejection: test depth before expensive perspective divide
+                if tex_z < zbufferPtr[index] then
+                    zbufferPtr[index] = tex_z
 
-                if texX < 0 then texX = 0 end
-                if texX >= texWidth then texX = texWidth - 1 end
-                if texY < 0 then texY = 0 end
-                if texY >= texHeight then texY = texHeight - 1 end
+                    -- Recover U and V from perspective-correct interpolation
+                    -- Only do this if pixel passes z-test
+                    local z_recip = 1 / tex_w
+                    local u = tex_u * z_recip
+                    local v = tex_v * z_recip
 
-                -- Bounds check
-                if col >= 0 and col < RENDER_WIDTH and row >= 0 and row < RENDER_HEIGHT then
-                    local index = row * RENDER_WIDTH + col
+                    -- Optimized texture sampling with bitwise AND for power-of-2, modulo otherwise
+                    local texX, texY
 
-                    -- Z-buffer test
-                    if tex_z < zbufferPtr[index] then
-                        zbufferPtr[index] = tex_z
-
-                        -- Sample texture using FFI (RGBA format)
-                        local texIndex = (texY * texWidth + texX) * 4
-                        local r = texturePtr[texIndex]
-                        local g = texturePtr[texIndex + 1]
-                        local b = texturePtr[texIndex + 2]
-
-                        -- Write to framebuffer
-                        local pixelIndex = index * 4
-                        framebufferPtr[pixelIndex] = r
-                        framebufferPtr[pixelIndex + 1] = g
-                        framebufferPtr[pixelIndex + 2] = b
-                        framebufferPtr[pixelIndex + 3] = 255
-
-                        stats.pixelsDrawn = stats.pixelsDrawn + 1
+                    -- Use bitwise AND if power of 2 (much faster than modulo)
+                    if isPowerOf2Width then
+                        texX = bit.band(math.floor(u), texWidthMask)
+                    else
+                        texX = math.floor(u % texWidthFloat)
+                        if texX < 0 then texX = texX + texWidth end
+                        if texX >= texWidth then texX = texWidthMask end
                     end
+
+                    if isPowerOf2Height then
+                        texY = bit.band(math.floor(v), texHeightMask)
+                    else
+                        texY = math.floor(v % texHeightFloat)
+                        if texY < 0 then texY = texY + texHeight end
+                        if texY >= texHeight then texY = texHeightMask end
+                    end
+
+                    -- Sample texture using FFI (RGBA format)
+                    local texIndex = (texY * texWidth + texX) * 4
+                    local r = texturePtr[texIndex]
+                    local g = texturePtr[texIndex + 1]
+                    local b = texturePtr[texIndex + 2]
+
+                    -- Apply depth fog with dithering if enabled
+                    if fogEnabled then
+                        local depth = 1 / tex_w  -- Recover actual depth
+
+                        if depth > fogNear then
+                            -- Calculate fog factor (0 = no fog, 1 = full fog)
+                            local fogFactor = (depth - fogNear) / (fogFar - fogNear)
+                            fogFactor = math.max(0, math.min(1, fogFactor))
+
+                            -- Dithered fog using Bayer matrix
+                            local bayerX = (col % 4) + 1
+                            local bayerY = (row % 4) + 1
+                            local threshold = bayerMatrix[bayerY][bayerX] / 16.0
+
+                            -- Apply dithering: if fog factor > threshold, use fog color
+                            if fogFactor > threshold then
+                                r = fogColor[1]
+                                g = fogColor[2]
+                                b = fogColor[3]
+                            end
+                        end
+                    end
+
+                    -- Write to framebuffer
+                    local pixelIndex = index * 4
+                    framebufferPtr[pixelIndex] = r
+                    framebufferPtr[pixelIndex + 1] = g
+                    framebufferPtr[pixelIndex + 2] = b
+                    framebufferPtr[pixelIndex + 3] = 255
+
+                    stats.pixelsDrawn = stats.pixelsDrawn + 1
                 end
 
                 -- Advance accumulators

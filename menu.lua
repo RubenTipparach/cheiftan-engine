@@ -3,9 +3,10 @@ local menu = {}
 local scene_manager = require("scene_manager")
 
 local menuItems = {
-    {title = "Test Cube", file = "test_cube_scene.lua"},
-    {title = "1000 Cubes", file = "cubes_scene_dda.lua"},
-    {title = "City Scene", file = "city_scene.lua"}
+    {title = "Mesh Test", file = "test_cube_scene.lua"},
+    {title = "Stress Test (1000 Cubes)", file = "cubes_scene_dda.lua"},
+    {title = "Demo Scene (City)", file = "city_scene.lua"},
+    {title = "Fog Scene (Dithered)", file = "fog_scene.lua"}
 }
 
 local selectedIndex = 1
@@ -83,7 +84,8 @@ function menu.launchScene(index)
     local sceneMap = {
         ["test_cube_scene.lua"] = "test_cube",
         ["cubes_scene_dda.lua"] = "cubes_dda",
-        ["city_scene.lua"] = "city"
+        ["city_scene.lua"] = "city",
+        ["fog_scene.lua"] = "fog"
     }
 
     local sceneName = sceneMap[item.file]
@@ -95,7 +97,9 @@ end
 function menu.returnToMenu()
     -- Clear loaded modules
     package.loaded.city_scene = nil
-    package.loaded.main_software = nil
+    package.loaded.cubes_scene_dda = nil
+    package.loaded.test_cube_scene = nil
+    package.loaded.fog_scene = nil
 
     -- Reset to menu
     love.load = menu.load
