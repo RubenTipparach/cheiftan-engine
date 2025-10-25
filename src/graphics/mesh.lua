@@ -118,24 +118,45 @@ end
 
 function mesh.createPyramid()
     local vertices = {
-        -- Base vertices
-        {pos = {-0.5, 0, -0.5}, uv = {0, 1}},   -- 1: base front-left
-        {pos = {0.5, 0, -0.5}, uv = {1, 1}},    -- 2: base front-right
-        {pos = {0.5, 0, 0.5}, uv = {1, 0}},     -- 3: base back-right
-        {pos = {-0.5, 0, 0.5}, uv = {0, 0}},    -- 4: base back-left
-        -- Tip
-        {pos = {0, 1, 0}, uv = {0.5, 0.5}}      -- 5: tip
+        -- Base face (facing down)
+        {pos = {-0.5, 0, -0.5}, uv = {0, 1}},   -- 1
+        {pos = {0.5, 0, 0.5}, uv = {1, 0}},     -- 2
+        {pos = {0.5, 0, -0.5}, uv = {1, 1}},    -- 3
+        {pos = {-0.5, 0, 0.5}, uv = {0, 0}},    -- 4
+
+        -- Front face
+        {pos = {-0.5, 0, -0.5}, uv = {0, 1}},   -- 5
+        {pos = {0, 1, 0}, uv = {0.5, 0}},       -- 6
+        {pos = {0.5, 0, -0.5}, uv = {1, 1}},    -- 7
+
+        -- Right face
+        {pos = {0.5, 0, -0.5}, uv = {0, 1}},    -- 8
+        {pos = {0, 1, 0}, uv = {0.5, 0}},       -- 9
+        {pos = {0.5, 0, 0.5}, uv = {1, 1}},     -- 10
+
+        -- Back face
+        {pos = {0.5, 0, 0.5}, uv = {0, 1}},     -- 11
+        {pos = {0, 1, 0}, uv = {0.5, 0}},       -- 12
+        {pos = {-0.5, 0, 0.5}, uv = {1, 1}},    -- 13
+
+        -- Left face
+        {pos = {-0.5, 0, 0.5}, uv = {0, 1}},    -- 14
+        {pos = {0, 1, 0}, uv = {0.5, 0}},       -- 15
+        {pos = {-0.5, 0, -0.5}, uv = {1, 1}}    -- 16
     }
 
-    -- Define triangles with CCW winding (same as cube)
+    -- Define triangles with CW winding (opposite of cube because pyramid geometry is inverted)
     local triangles = {
-        -- Base (facing down) - two triangles
-        {1, 3, 2}, {1, 4, 3},
-        -- Four sides
-        {1, 5, 4},  -- Left
-        {4, 5, 3},  -- Back
-        {3, 5, 2},  -- Right
-        {2, 5, 1}   -- Front
+        -- Base (two triangles)
+        {1, 3, 2}, {1, 2, 4},
+        -- Front
+        {5, 7, 6},
+        -- Right
+        {8, 10, 9},
+        -- Back
+        {11, 13, 12},
+        -- Left
+        {14, 16, 15}
     }
 
     return {
