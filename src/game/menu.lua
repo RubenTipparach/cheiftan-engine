@@ -6,7 +6,8 @@ local menuItems = {
     {title = "Mesh Test", file = "test_cube_scene.lua"},
     {title = "Stress Test (1000 Cubes)", file = "cubes_scene_dda.lua"},
     {title = "Demo Scene (City)", file = "city_scene.lua"},
-    {title = "Fog Scene (Dithered)", file = "fog_scene.lua"}
+    {title = "Fog Scene (Dithered)", file = "fog_scene.lua"},
+    {title = "Lighting Test", file = "lighting_test_scene.lua"}
 }
 
 local selectedIndex = 1
@@ -85,7 +86,8 @@ function menu.launchScene(index)
         ["test_cube_scene.lua"] = "test_cube",
         ["cubes_scene_dda.lua"] = "cubes_dda",
         ["city_scene.lua"] = "city",
-        ["fog_scene.lua"] = "fog"
+        ["fog_scene.lua"] = "fog",
+        ["lighting_test_scene.lua"] = "lighting"
     }
 
     local sceneName = sceneMap[item.file]

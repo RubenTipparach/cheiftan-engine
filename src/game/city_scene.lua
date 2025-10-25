@@ -39,6 +39,7 @@ function love.load()
 
     -- Initialize renderer
     renderer_dda.init(RENDER_WIDTH, RENDER_HEIGHT)
+    renderer_dda.setFog(false)  -- Disable fog for this scene
     print("DDA Renderer initialized")
 
     -- Create canvas for scaling

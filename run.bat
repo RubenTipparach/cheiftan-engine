@@ -15,4 +15,3 @@ if errorlevel 1 (
     echo Download from: https://love2d.org/
     echo.
 )
-pause

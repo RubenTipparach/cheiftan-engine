@@ -132,7 +132,7 @@ end
 -- DDA Triangle Rasterization with perspective-correct texture mapping
 -- vertex format: {x, y, w, u, v, z}
 -- where w = 1/z, u and v are pre-divided by w
-function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
+function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness)
     -- print("  [DDA] drawTriangle called")
 
     -- Backface culling (cull clockwise/back-facing triangles)
@@ -348,6 +348,13 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
             local isPowerOf2Width = bit.band(texWidth, texWidthMask) == 0
             local isPowerOf2Height = bit.band(texHeight, texHeightMask) == 0
 
+            -- Perspective-correct every 8 pixels optimization
+            local PERSP_STEP = 8
+            local pixel_count = 0
+            local u_linear, v_linear
+            local u_linear_step, v_linear_step
+            local next_persp_col = col
+
             while col < draw_max_x do
                 -- Index calculation (bounds already guaranteed by clipping)
                 local index = row * RENDER_WIDTH + col
@@ -356,11 +363,46 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
                 if tex_z < zbufferPtr[index] then
                     zbufferPtr[index] = tex_z
 
-                    -- Recover U and V from perspective-correct interpolation
-                    -- Only do this if pixel passes z-test
-                    local z_recip = 1 / tex_w
-                    local u = tex_u * z_recip
-                    local v = tex_v * z_recip
+                    -- Perspective-correct calculation every Nth pixel
+                    local u, v
+                    if col >= next_persp_col then
+                        -- Calculate perspective-correct UV at this anchor point
+                        local z_recip = 1 / tex_w
+                        local u_correct = tex_u * z_recip
+                        local v_correct = tex_v * z_recip
+
+                        -- Calculate next anchor point
+                        local next_col = col + PERSP_STEP
+                        if next_col > draw_max_x then next_col = draw_max_x end
+                        local span_len = next_col - col
+
+                        if span_len > 1 then
+                            -- Calculate UV at next anchor point
+                            local next_tex_w = tex_w + tex_w_step * span_len
+                            local next_tex_u = tex_u + tex_u_step * span_len
+                            local next_tex_v = tex_v + tex_v_step * span_len
+                            local next_z_recip = 1 / next_tex_w
+                            local next_u_correct = next_tex_u * next_z_recip
+                            local next_v_correct = next_tex_v * next_z_recip
+
+                            -- Linear interpolation step between anchor points
+                            u_linear_step = (next_u_correct - u_correct) / span_len
+                            v_linear_step = (next_v_correct - v_correct) / span_len
+                        else
+                            u_linear_step = 0
+                            v_linear_step = 0
+                        end
+
+                        u_linear = u_correct
+                        v_linear = v_correct
+                        next_persp_col = next_col
+                        pixel_count = 0
+                    end
+
+                    -- Use linearly interpolated UV
+                    u = u_linear + u_linear_step * pixel_count
+                    v = v_linear + v_linear_step * pixel_count
+                    pixel_count = pixel_count + 1
 
                     -- Optimized texture sampling with bitwise AND for power-of-2, modulo otherwise
                     local texX, texY
@@ -388,8 +430,25 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
                     local g = texturePtr[texIndex + 1]
                     local b = texturePtr[texIndex + 2]
 
+                    -- Apply brightness modulation with dithering if provided
+                    if brightness then
+                        -- Bayer dithering for lighting
+                        local bayerX = (col % 4) + 1
+                        local bayerY = (row % 4) + 1
+                        local threshold = bayerMatrix[bayerY][bayerX] / 16.0
+
+                        -- If brightness is below threshold, darken the pixel to black
+                        if brightness < threshold then
+                            r = 0
+                            g = 0
+                            b = 0
+                        end
+                        -- Otherwise keep full brightness (texture color as-is)
+                    end
+
                     -- Apply depth fog with dithering if enabled
-                    if fogEnabled then
+                    -- Only apply fog to pixels that aren't already black from lighting
+                    if fogEnabled and not (r == 0 and g == 0 and b == 0) then
                         local depth = 1 / tex_w  -- Recover actual depth
 
                         if depth > fogNear then
@@ -540,7 +599,7 @@ local function clipTriangleNearPlane(p1, p2, p3, v1, v2, v3, n1, n2, n3, nearPla
 end
 
 -- Draw a triangle that's already in clip space (used after clipping)
-local function drawClippedTriangle(p1, p2, p3, v1, v2, v3, texture, texData)
+local function drawClippedTriangle(p1, p2, p3, v1, v2, v3, texture, texData, brightness)
     -- Project to screen space
     local s1x = (p1[1] / p1[4] + 1) * RENDER_WIDTH * 0.5
     local s1y = (1 - p1[2] / p1[4]) * RENDER_HEIGHT * 0.5
@@ -577,12 +636,13 @@ local function drawClippedTriangle(p1, p2, p3, v1, v2, v3, texture, texData)
         p3[3] / p3[4]
     }
 
-    renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
+    renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness)
 end
 
 -- Draw a triangle in 3D world space
--- v1, v2, v3 are tables with {pos = {x,y,z}, uv = {u,v}}
-function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData)
+-- v1, v2, v3 are tables with {pos = {x,y,z}, uv = {u,v}, brightness = 0-1 (optional)}
+-- brightness is optional per-vertex lighting multiplier
+function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData, brightness)
     if not currentMVP then
         error("Must call renderer_dda.setMatrices() before drawTriangle3D()")
     end
@@ -646,7 +706,7 @@ function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData)
         -- Recursively draw clipped triangles
         for _, tri in ipairs(clippedTriangles) do
             -- tri contains {p1, p2, p3, v1, v2, v3} already in clip space
-            drawClippedTriangle(tri[1], tri[2], tri[3], tri[4], tri[5], tri[6], texture, texData)
+            drawClippedTriangle(tri[1], tri[2], tri[3], tri[4], tri[5], tri[6], texture, texData, brightness)
         end
         return
     end
@@ -687,7 +747,7 @@ function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData)
         p3[3] / p3[4]
     }
 
-    renderer_dda.drawTriangle(vA, vB, vC, texture, texData)
+    renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness)
 end
 
 return renderer_dda

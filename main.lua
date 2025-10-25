@@ -7,6 +7,7 @@ scene_manager.register("test_cube", require("test_cube_scene"))
 scene_manager.register("city", require("city_scene"))
 scene_manager.register("cubes_dda", require("cubes_scene_dda"))
 scene_manager.register("fog", require("fog_scene"))
+scene_manager.register("lighting", require("lighting_test_scene"))
 
 function love.load()
     -- Window mode is set in conf.lua

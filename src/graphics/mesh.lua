@@ -116,4 +116,32 @@ function mesh.createSphere(rings, segments)
     }
 end
 
+function mesh.createPyramid()
+    local vertices = {
+        -- Base vertices
+        {pos = {-0.5, 0, -0.5}, uv = {0, 1}},   -- 1: base front-left
+        {pos = {0.5, 0, -0.5}, uv = {1, 1}},    -- 2: base front-right
+        {pos = {0.5, 0, 0.5}, uv = {1, 0}},     -- 3: base back-right
+        {pos = {-0.5, 0, 0.5}, uv = {0, 0}},    -- 4: base back-left
+        -- Tip
+        {pos = {0, 1, 0}, uv = {0.5, 0.5}}      -- 5: tip
+    }
+
+    -- Define triangles with CCW winding (same as cube)
+    local triangles = {
+        -- Base (facing down) - two triangles
+        {1, 3, 2}, {1, 4, 3},
+        -- Four sides
+        {1, 5, 4},  -- Left
+        {4, 5, 3},  -- Back
+        {3, 5, 2},  -- Right
+        {2, 5, 1}   -- Front
+    }
+
+    return {
+        vertices = vertices,
+        triangles = triangles
+    }
+end
+
 return mesh
